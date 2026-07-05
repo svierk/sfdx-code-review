@@ -1,0 +1,257 @@
+name: SFDX Code Review
+description: GitHub composite action for static code review of Salesforce projects as a single, configurable quality gate.
+
+branding:
+  icon: code
+  color: blue
+
+inputs:
+  code-analyzer:
+    description: Run the Salesforce Code Analyzer.
+    required: false
+    default: 'true'
+  prettier:
+    description: Run a Prettier formatting check.
+    required: false
+    default: 'false'
+  eslint:
+    description: Run ESLint and produce a report (e.g. for SonarQube/SonarCloud).
+    required: false
+    default: 'false'
+
+  # --- Salesforce Code Analyzer options ---
+  workspace:
+    description: Comma-separated list of files or folders to analyze, e.g. "force-app". Defaults to the current directory.
+    required: false
+  rule-selector:
+    description: Comma-separated list of rule selectors that determine which rules run, e.g. "Recommended" or "Security,Performance".
+    required: false
+    default: Recommended
+  config-file:
+    description: Path to a Code Analyzer configuration file (code-analyzer.yml) to customize engines and rules.
+    required: false
+  output-file:
+    description: >
+      Comma-separated list of Code Analyzer output files to write the results to.
+      The format is derived from the file extension, e.g. "results.html,results.sarif,results.json".
+    required: false
+  severity-threshold:
+    description: >
+      Fail the action if the Code Analyzer finds a violation with this severity or higher.
+      Permissible values are 1 (Critical) to 5 (Info), or the names Critical, High, Moderate, Low, Info.
+    required: false
+  install-plugin:
+    description: >
+      Ensure the Code Analyzer plugin is available before running. Installation is skipped automatically when the plugin
+      (or the requested plugin-version) is already installed. Set to false to disable the check entirely.
+    required: false
+    default: 'true'
+  plugin-version:
+    description: Specific version of the code-analyzer plugin to install, e.g. "5.0.0".
+    required: false
+
+  # --- Prettier options ---
+  prettier-command:
+    description: >
+      Command used to check formatting. Defaults to invoking Prettier directly so it works without a specific
+      package.json script. Override it to use your own, e.g. "npm run prettier:verify".
+    required: false
+    default: npx prettier --check .
+
+  # --- ESLint options ---
+  eslint-command:
+    description: >
+      Command used to run ESLint and write a report. Defaults to invoking ESLint directly and writing the native
+      JSON report consumed by Sonar. Override it to use your own, e.g. "npm run lint:sonar".
+    required: false
+    default: npx eslint . --format json --output-file eslint-report.json
+  eslint-report-path:
+    description: Path to the ESLint JSON report produced by the eslint command, used to report error/warning counts.
+    required: false
+    default: ./eslint-report.json
+
+  step-summary:
+    description: Write a result section to the GitHub Actions job summary. Set to false to avoid collisions with a custom workflow summary.
+    required: false
+    default: 'true'
+
+outputs:
+  code-analyzer-outcome:
+    description: Outcome of the Code Analyzer run ("Passed"/"Failed"), empty if not run.
+    value: ${{ steps.review.outputs.code-analyzer-outcome }}
+  prettier-outcome:
+    description: Outcome of the Prettier check ("Passed"/"Failed"), empty if not run.
+    value: ${{ steps.review.outputs.prettier-outcome }}
+  eslint-outcome:
+    description: Outcome of the ESLint run ("Passed"/"Failed"), empty if not run.
+    value: ${{ steps.review.outputs.eslint-outcome }}
+  eslint-errors:
+    description: Number of ESLint errors, empty if not run.
+    value: ${{ steps.review.outputs.eslint-errors }}
+  eslint-warnings:
+    description: Number of ESLint warnings, empty if not run.
+    value: ${{ steps.review.outputs.eslint-warnings }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Code Analyzer Plugin
+      if: ${{ inputs.code-analyzer == 'true' && inputs.install-plugin == 'true' }}
+      shell: bash
+      env:
+        PLUGIN_VERSION: ${{ inputs.plugin-version }}
+      run: |
+        set -euo pipefail
+
+        ensure_code_analyzer() {
+          local installed log
+          installed="$(sf plugins 2>/dev/null | sed '/Uninstalled JIT Plugins:/,$d' | grep '^code-analyzer ' || true)"
+
+          if [[ -n "$PLUGIN_VERSION" ]]; then
+            if echo "$installed" | grep -qF " $PLUGIN_VERSION"; then
+              echo "code-analyzer plugin version $PLUGIN_VERSION already installed."
+              return 0
+            fi
+            echo "Installing code-analyzer plugin version $PLUGIN_VERSION..."
+            if ! log="$(echo y | sf plugins install "code-analyzer@$PLUGIN_VERSION" 2>&1)"; then
+              echo "$log"
+              echo "::error::Failed to install the code-analyzer plugin."
+              return 1
+            fi
+          else
+            if [[ -n "$installed" ]]; then
+              echo "code-analyzer plugin already installed."
+              return 0
+            fi
+            echo "Installing latest code-analyzer plugin..."
+            if ! log="$(echo y | sf plugins install code-analyzer 2>&1)"; then
+              echo "$log"
+              echo "::error::Failed to install the code-analyzer plugin."
+              return 1
+            fi
+          fi
+        }
+
+        ensure_code_analyzer
+        sf plugins
+    - name: Run Code Review
+      id: review
+      shell: bash
+      env:
+        CODE_ANALYZER: ${{ inputs.code-analyzer }}
+        PRETTIER: ${{ inputs.prettier }}
+        ESLINT: ${{ inputs.eslint }}
+        WORKSPACE: ${{ inputs.workspace }}
+        RULE_SELECTOR: ${{ inputs.rule-selector }}
+        CONFIG_FILE: ${{ inputs.config-file }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+        SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+        PRETTIER_COMMAND: ${{ inputs.prettier-command }}
+        ESLINT_COMMAND: ${{ inputs.eslint-command }}
+        ESLINT_REPORT_PATH: ${{ inputs.eslint-report-path }}
+        STEP_SUMMARY: ${{ inputs.step-summary }}
+      run: |
+        set -uo pipefail
+
+        overall_exit=0
+        ca_outcome=""; prettier_outcome=""; eslint_outcome=""; eslint_errors=""; eslint_warnings=""
+
+        # Append a flag once per comma-separated value (trimmed).
+        add_multi() {
+          local flag="$1" values="$2" item
+          IFS=',' read -ra items <<< "$values"
+          for item in "${items[@]}"; do
+            item="$(echo "$item" | xargs)"
+            [[ -n "$item" ]] && args+=("$flag" "$item")
+          done
+        }
+
+        # ------------------------ Salesforce Code Analyzer ------------------------
+        if [[ "$CODE_ANALYZER" == "true" ]]; then
+          echo "▶️ Running Salesforce Code Analyzer..."
+          args=()
+          [[ -n "$WORKSPACE" ]] && add_multi --workspace "$WORKSPACE"
+          [[ -n "$RULE_SELECTOR" ]] && add_multi --rule-selector "$RULE_SELECTOR"
+          [[ -n "$OUTPUT_FILE" ]] && add_multi --output-file "$OUTPUT_FILE"
+          [[ -n "$CONFIG_FILE" ]] && args+=(--config-file "$CONFIG_FILE")
+          [[ -n "$SEVERITY_THRESHOLD" ]] && args+=(--severity-threshold "$SEVERITY_THRESHOLD")
+
+          sf code-analyzer run "${args[@]}"
+          code=$?
+          if [[ $code -eq 0 ]]; then
+            ca_outcome="Passed"
+            echo "✅ Code Analyzer: no violations at or above the threshold"
+          else
+            ca_outcome="Failed"
+            echo "⚠️ Code Analyzer: violations at or above the severity threshold"
+            overall_exit=$code
+          fi
+        fi
+
+        # ------------------------------- Prettier --------------------------------
+        if [[ "$PRETTIER" == "true" ]]; then
+          echo "▶️ Checking formatting with Prettier..."
+          bash -c "$PRETTIER_COMMAND"
+          code=$?
+          if [[ $code -eq 0 ]]; then
+            prettier_outcome="Passed"
+            echo "✅ Prettier: all files are formatted"
+          else
+            prettier_outcome="Failed"
+            echo "❌ Prettier: formatting issues found (run Prettier locally to fix)"
+            overall_exit=$code
+          fi
+        fi
+
+        # -------------------------------- ESLint ---------------------------------
+        if [[ "$ESLINT" == "true" ]]; then
+          echo "▶️ Running ESLint..."
+          bash -c "$ESLINT_COMMAND"
+          code=$?
+
+          if [[ -f "$ESLINT_REPORT_PATH" ]]; then
+            eslint_errors=$(jq '[.[].errorCount] | add // 0' "$ESLINT_REPORT_PATH")
+            eslint_warnings=$(jq '[.[].warningCount] | add // 0' "$ESLINT_REPORT_PATH")
+          fi
+
+          if [[ $code -eq 0 ]]; then
+            eslint_outcome="Passed"
+            echo "✅ ESLint: no errors (${eslint_warnings:-0} warnings)"
+          else
+            eslint_outcome="Failed"
+            echo "❌ ESLint: ${eslint_errors:-?} errors, ${eslint_warnings:-0} warnings"
+            overall_exit=$code
+          fi
+        fi
+
+        # ------------------------------- Outputs ---------------------------------
+        {
+          echo "code-analyzer-outcome=${ca_outcome}"
+          echo "prettier-outcome=${prettier_outcome}"
+          echo "eslint-outcome=${eslint_outcome}"
+          echo "eslint-errors=${eslint_errors}"
+          echo "eslint-warnings=${eslint_warnings}"
+        } >> "$GITHUB_OUTPUT"
+
+        # ----------------------------- Step summary ------------------------------
+        if [[ "$STEP_SUMMARY" == "true" ]]; then
+          {
+            echo ""
+            echo "### 🔎 Code review"
+            echo ""
+            echo "| Check | Result | Details |"
+            echo "| --- | --- | --- |"
+            if [[ "$CODE_ANALYZER" == "true" ]]; then
+              echo "| Salesforce Code Analyzer | ${ca_outcome:-n/a} | rules: \`${RULE_SELECTOR:-Recommended}\` |"
+            fi
+            if [[ "$PRETTIER" == "true" ]]; then
+              echo "| Prettier (formatting) | ${prettier_outcome:-n/a} | — |"
+            fi
+            if [[ "$ESLINT" == "true" ]]; then
+              echo "| ESLint | ${eslint_outcome:-n/a} | ${eslint_errors:-0} errors, ${eslint_warnings:-0} warnings |"
+            fi
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        exit $overall_exit

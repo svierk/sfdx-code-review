@@ -176,8 +176,10 @@ runs:
           [[ -n "$CONFIG_FILE" ]] && args+=(--config-file "$CONFIG_FILE")
           [[ -n "$SEVERITY_THRESHOLD" ]] && args+=(--severity-threshold "$SEVERITY_THRESHOLD")
 
+          echo "::group::Salesforce Code Analyzer output"
           sf code-analyzer run "${args[@]}"
           code=$?
+          echo "::endgroup::"
           if [[ $code -eq 0 ]]; then
             ca_outcome="Passed"
             echo "✅ Code Analyzer: no violations at or above the threshold"
@@ -191,8 +193,10 @@ runs:
         # ------------------------------- Prettier --------------------------------
         if [[ "$PRETTIER" == "true" ]]; then
           echo "▶️ Checking formatting with Prettier..."
+          echo "::group::Prettier output"
           bash -c "$PRETTIER_COMMAND"
           code=$?
+          echo "::endgroup::"
           if [[ $code -eq 0 ]]; then
             prettier_outcome="Passed"
             echo "✅ Prettier: all files are formatted"
@@ -206,8 +210,10 @@ runs:
         # -------------------------------- ESLint ---------------------------------
         if [[ "$ESLINT" == "true" ]]; then
           echo "▶️ Running ESLint..."
+          echo "::group::ESLint output"
           bash -c "$ESLINT_COMMAND"
           code=$?
+          echo "::endgroup::"
 
           if [[ -f "$ESLINT_REPORT_PATH" ]]; then
             eslint_errors=$(jq '[.[].errorCount] | add // 0' "$ESLINT_REPORT_PATH")
@@ -235,6 +241,14 @@ runs:
 
         # ----------------------------- Step summary ------------------------------
         if [[ "$STEP_SUMMARY" == "true" ]]; then
+          # Prefix an outcome with a status icon for the summary table.
+          format_result() {
+            case "$1" in
+              Passed) echo "✅ Passed" ;;
+              Failed) echo "❌ Failed" ;;
+              *) echo "n/a" ;;
+            esac
+          }
           {
             echo ""
             echo "### 🔎 Code review"
@@ -242,13 +256,13 @@ runs:
             echo "| Check | Result | Details |"
             echo "| --- | --- | --- |"
             if [[ "$CODE_ANALYZER" == "true" ]]; then
-              echo "| Salesforce Code Analyzer | ${ca_outcome:-n/a} | rules: \`${RULE_SELECTOR:-Recommended}\` |"
+              echo "| Salesforce Code Analyzer | $(format_result "$ca_outcome") | rules: \`${RULE_SELECTOR:-Recommended}\` |"
             fi
             if [[ "$PRETTIER" == "true" ]]; then
-              echo "| Prettier (formatting) | ${prettier_outcome:-n/a} | — |"
+              echo "| Prettier (formatting) | $(format_result "$prettier_outcome") | — |"
             fi
             if [[ "$ESLINT" == "true" ]]; then
-              echo "| ESLint | ${eslint_outcome:-n/a} | ${eslint_errors:-0} errors, ${eslint_warnings:-0} warnings |"
+              echo "| ESLint | $(format_result "$eslint_outcome") | ${eslint_errors:-0} errors, ${eslint_warnings:-0} warnings |"
             fi
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"

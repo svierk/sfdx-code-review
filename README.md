@@ -19,21 +19,26 @@ jobs:
   code-review:
     name: Code Review
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # least-privilege GITHUB_TOKEN - this job only reads the repository
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0 # full history, required for the Sonar analysis
+          persist-credentials: false # the GITHUB_TOKEN is not needed after the checkout - don't leave it in .git/config
 
       - name: Select Node Version
-        uses: svierk/get-node-version@main
+        uses: svierk/get-node-version@v1.5.1
 
       - name: Install Dependencies
-        run: npm install --ignore-scripts
+        run: npm ci --ignore-scripts
 
       - name: Install SF CLI
-        uses: svierk/sfdx-cli-setup@main
+        uses: svierk/sfdx-cli-setup@v1.1.3
 
       - name: Code Review
-        uses: svierk/sfdx-code-review@main
+        uses: svierk/sfdx-code-review@v1.0.0
         with:
           code-analyzer: true
           prettier: true
@@ -42,13 +47,12 @@ jobs:
           severity-threshold: 3
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@master
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # SONAR_HOST_URL is additionally required for a self-hosted SonarQube Server
 ```
 
-> Prettier and ESLint run locally via Node, so install the project dependencies first (e.g. `npm install`) and make sure the project provides the matching config (`.prettierrc`, `eslint.config.js`/`.eslintrc`).
+> Prettier and ESLint run locally via Node, so install the project dependencies first (e.g. `npm ci`) and make sure the project provides the matching config (`.prettierrc`, `eslint.config.js`/`.eslintrc`).
 
 > **Applying your ESLint config to the Code Analyzer engine.** By default the Code Analyzer's bundled ESLint engine uses its own base rules and does *not* apply your workspace `eslint.config.js` — it logs a hint when it finds one (`ESLint configuration file 'eslint.config.js' was found but not applied`). This is expected: the separate ESLint check above (`eslint: true`) is what applies your project config and produces the Sonar report. If you also want your config applied *inside* the Code Analyzer's ESLint engine, this is an engine setting (no CLI flag exists), so pass a `code-analyzer.yml` via the `config-file` input:
 >
@@ -63,19 +67,24 @@ jobs:
 
 ### Uploading Code Analyzer results to GitHub code scanning
 
-When producing a SARIF file, let the analyzer report findings without failing the job immediately, then upload the SARIF:
+When producing a SARIF file, let the analyzer report findings without failing the job immediately, then upload the SARIF. Uploading to code scanning requires the job to additionally grant `security-events: write`:
 
 ```yaml
+    permissions:
+      contents: read
+      security-events: write # required to upload the SARIF file to GitHub code scanning
+
+    steps:
       - name: Code Review
         continue-on-error: true
-        uses: svierk/sfdx-code-review@main
+        uses: svierk/sfdx-code-review@v1.0.0
         with:
           workspace: force-app
           output-file: results.sarif
           severity-threshold: 3
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4.37.7
         with:
           sarif_file: results.sarif
 ```
@@ -120,6 +129,21 @@ sonar.eslint.reportPaths=./eslint-report.json
 ```
 
 The Salesforce Code Analyzer can additionally emit a SARIF/JSON file via `output-file` for GitHub code scanning or other tools.
+
+The scan step itself only needs `SONAR_TOKEN` as an environment variable (plus `SONAR_HOST_URL` for a self-hosted SonarQube Server). A `GITHUB_TOKEN` is **not** required: pull request decoration is performed by the SonarQube Cloud GitHub App, not by the scanner, so passing the token would hand a credential to a third-party action for no gain.
+
+## Security & versioning
+
+Every `uses:` reference in the snippets above is **pinned to an exact release version**, e.g. `svierk/sfdx-code-review@v1.0.0`. Do the same in your own pipelines:
+
+- **Never reference a mutable ref** such as `@main`, `@master` or `@v1`. It runs whatever code sits on that branch/tag at run time — with access to your repository and org credentials — so a compromised or rewritten ref would run unnoticed.
+- **Good — pin to an exact release tag** (`@v1.0.0`). Readable, concrete, and bumped through reviewed pull requests.
+- **Strictest — pin to a full-length commit SHA** (`@a1b2c3d…`) with the version as a trailing comment. A SHA can never be re-pointed by the publisher; the cost is readability.
+- **Enable [Dependabot](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/keeping-your-actions-up-to-date-with-dependabot) for `github-actions`** in the repository that consumes this action, so those pins are bumped for you instead of silently ageing. Note that Dependabot only scans `.github/workflows` — copy-paste snippets in documentation have to be updated by hand.
+
+This action itself needs **no secrets and no `GITHUB_TOKEN` permissions** — it only runs the Salesforce Code Analyzer, Prettier and ESLint against the checked-out sources. Grant the calling job the least privilege it needs (`contents: read` is enough, plus `security-events: write` when uploading SARIF) and use `persist-credentials: false` on the checkout so the token is not written to `.git/config`, where the CLI, a plugin or an ESLint config could pick it up.
+
+If you pass credentials to *other* steps of the same workflow, reference them as **environment variables** (`env: SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}`, then `"$SONAR_TOKEN"` in the script), never by interpolating `${{ secrets.… }}` into a `run:` script itself — that would allow command injection and can leak values into the log. The steps of this action follow that rule for all of their inputs: every input is passed through `env:` and referenced as a shell variable, so a value such as `eslint-command` or `workspace` can never be expanded into the script body.
 
 ## References
 

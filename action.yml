@@ -21,10 +21,14 @@ inputs:
 
   # --- Salesforce Code Analyzer options ---
   workspace:
-    description: Comma-separated list of files or folders to analyze, e.g. "force-app". Defaults to the current directory.
+    description: >
+      Files or folders to analyze, as a comma-separated or multi-line list, e.g. "force-app".
+      Defaults to the current directory.
     required: false
   rule-selector:
-    description: Comma-separated list of rule selectors that determine which rules run, e.g. "Recommended" or "Security,Performance".
+    description: >
+      Rule selectors that determine which rules run, as a comma-separated or multi-line list,
+      e.g. "Recommended" or "Security,Performance".
     required: false
     default: Recommended
   config-file:
@@ -32,7 +36,7 @@ inputs:
     required: false
   output-file:
     description: >
-      Comma-separated list of Code Analyzer output files to write the results to.
+      Code Analyzer output files to write the results to, as a comma-separated or multi-line list.
       The format is derived from the file extension, e.g. "results.html,results.sarif,results.json".
     required: false
   severity-threshold:
@@ -156,13 +160,31 @@ runs:
         overall_exit=0
         ca_outcome=""; prettier_outcome=""; eslint_outcome=""; eslint_errors=""; eslint_warnings=""
 
-        # Append a flag once per comma-separated value (trimmed).
+        # Splits a comma- or newline-separated input into the global SPLIT array
+        # and trims the surrounding whitespace, so that both notations work:
+        #   workspace: 'force-app,my-other-app'
+        #   workspace: |
+        #     force-app
+        #     my-other-app
+        split_list() {
+          SPLIT=()
+          local raw item
+          raw="${1//,/$'\n'}"
+          while IFS= read -r item; do
+            item="${item#"${item%%[![:space:]]*}"}"
+            item="${item%"${item##*[![:space:]]}"}"
+            if [[ -n "$item" ]]; then
+              SPLIT+=("$item")
+            fi
+          done <<< "$raw"
+        }
+
+        # Append a flag once per list value (see split_list).
         add_multi() {
-          local flag="$1" values="$2" item
-          IFS=',' read -ra items <<< "$values"
-          for item in "${items[@]}"; do
-            item="$(echo "$item" | xargs)"
-            [[ -n "$item" ]] && args+=("$flag" "$item")
+          local flag="$1" item
+          split_list "$2"
+          for item in ${SPLIT[@]+"${SPLIT[@]}"}; do
+            args+=("$flag" "$item")
           done
         }
 
@@ -177,7 +199,7 @@ runs:
           [[ -n "$SEVERITY_THRESHOLD" ]] && args+=(--severity-threshold "$SEVERITY_THRESHOLD")
 
           echo "::group::Salesforce Code Analyzer output"
-          sf code-analyzer run "${args[@]}"
+          sf code-analyzer run ${args[@]+"${args[@]}"}
           code=$?
           echo "::endgroup::"
           if [[ $code -eq 0 ]]; then
@@ -256,7 +278,14 @@ runs:
             echo "| Check | Result | Details |"
             echo "| --- | --- | --- |"
             if [[ "$CODE_ANALYZER" == "true" ]]; then
-              echo "| Salesforce Code Analyzer | $(format_result "$ca_outcome") | rules: \`${RULE_SELECTOR:-Recommended}\` |"
+              # Join the parsed selectors so a multi-line input can't break the table row.
+              split_list "$RULE_SELECTOR"
+              rules="Recommended"
+              if [[ ${#SPLIT[@]} -gt 0 ]]; then
+                rules="$(printf '%s, ' "${SPLIT[@]}")"
+                rules="${rules%, }"
+              fi
+              echo "| Salesforce Code Analyzer | $(format_result "$ca_outcome") | rules: \`${rules}\` |"
             fi
             if [[ "$PRETTIER" == "true" ]]; then
               echo "| Prettier (formatting) | $(format_result "$prettier_outcome") | — |"

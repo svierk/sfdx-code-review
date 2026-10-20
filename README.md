@@ -38,7 +38,7 @@ jobs:
         uses: svierk/sfdx-cli-setup@v1.1.3
 
       - name: Code Review
-        uses: svierk/sfdx-code-review@v1.0.0
+        uses: svierk/sfdx-code-review@v1.1.0
         with:
           code-analyzer: true
           prettier: true
@@ -65,6 +65,25 @@ jobs:
 >     auto_discover_eslint_config: true
 > ```
 
+### List inputs (comma-separated or multi-line)
+
+The list inputs - `workspace`, `rule-selector` and `output-file` - accept a comma-separated string as well as a multi-line block, and the two notations can be mixed freely within one step. A comma-separated string keeps short lists on a single line, a block stays readable once a list grows:
+
+```yaml
+      - name: Code Review
+        uses: svierk/sfdx-code-review@v1.1.0
+        with:
+          rule-selector: 'Security,Performance' # comma-separated
+          workspace: | # multi-line block
+            force-app
+            my-other-app
+          output-file: |
+            results.html
+            results.sarif
+```
+
+Surrounding whitespace and blank lines are ignored, so `'Security, Performance'` is read exactly like the tightly packed `'Security,Performance'`. Whitespace inside a value is kept, e.g. for a path like `force-app/main/my folder`.
+
 ### Uploading Code Analyzer results to GitHub code scanning
 
 When producing a SARIF file, let the analyzer report findings without failing the job immediately, then upload the SARIF. Uploading to code scanning requires the job to additionally grant `security-events: write`:
@@ -77,7 +96,7 @@ When producing a SARIF file, let the analyzer report findings without failing th
     steps:
       - name: Code Review
         continue-on-error: true
-        uses: svierk/sfdx-code-review@v1.0.0
+        uses: svierk/sfdx-code-review@v1.1.0
         with:
           workspace: force-app
           output-file: results.sarif
@@ -96,10 +115,10 @@ When producing a SARIF file, let the analyzer report findings without failing th
 | `code-analyzer`      | no       | `true`                                                 | Run the Salesforce Code Analyzer.                                                              |
 | `prettier`           | no       | `false`                                                | Run a Prettier formatting check.                                                              |
 | `eslint`             | no       | `false`                                                | Run ESLint and produce a report (e.g. for Sonar).                                             |
-| `workspace`          | no       |                                                        | Comma-separated files/folders for the Code Analyzer. Defaults to the current directory.       |
-| `rule-selector`      | no       | `Recommended`                                          | Comma-separated Code Analyzer rule selectors, e.g. `Security,Performance`.                     |
+| `workspace`          | no       |                                                        | Files/folders for the Code Analyzer, comma-separated or multi-line. Defaults to the current directory. |
+| `rule-selector`      | no       | `Recommended`                                          | Code Analyzer rule selectors, comma-separated or multi-line, e.g. `Security,Performance`.      |
 | `config-file`        | no       |                                                        | Path to a Code Analyzer configuration file (`code-analyzer.yml`).                             |
-| `output-file`        | no       |                                                        | Comma-separated Code Analyzer output files; format derived from the extension (`.sarif`, `.html`, `.json`, …). |
+| `output-file`        | no       |                                                        | Code Analyzer output files, comma-separated or multi-line; format derived from the extension (`.sarif`, `.html`, `.json`, …). |
 | `severity-threshold` | no       |                                                        | Fail if the Code Analyzer finds a violation with this severity or higher (`1`–`5` / `Critical`–`Info`). |
 | `install-plugin`     | no       | `true`                                                 | Install the Code Analyzer plugin before running. Set to `false` if installed via sfdx-cli-setup. |
 | `plugin-version`     | no       |                                                        | Specific version of the `code-analyzer` plugin to install, e.g. `5.0.0`.                      |
@@ -134,7 +153,7 @@ The scan step itself only needs `SONAR_TOKEN` as an environment variable (plus `
 
 ## Security & versioning
 
-Every `uses:` reference in the snippets above is **pinned to an exact release version**, e.g. `svierk/sfdx-code-review@v1.0.0`. Do the same in your own pipelines:
+Every `uses:` reference in the snippets above is **pinned to an exact release version**, e.g. `svierk/sfdx-code-review@v1.1.0`. Do the same in your own pipelines:
 
 - **Never reference a mutable ref** such as `@main`, `@master` or `@v1`. It runs whatever code sits on that branch/tag at run time — with access to your repository and org credentials — so a compromised or rewritten ref would run unnoticed.
 - **Good — pin to an exact release tag** (`@v1.0.0`). Readable, concrete, and bumped through reviewed pull requests.

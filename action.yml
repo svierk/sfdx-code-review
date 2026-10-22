@@ -198,10 +198,41 @@ runs:
           [[ -n "$CONFIG_FILE" ]] && args+=(--config-file "$CONFIG_FILE")
           [[ -n "$SEVERITY_THRESHOLD" ]] && args+=(--severity-threshold "$SEVERITY_THRESHOLD")
 
+          # A SARIF report only contains a run for each engine with violations. GitHub code
+          # scanning rejects a report without any run, and keeps the alerts of an engine that
+          # is missing from the report open. The engines that ran are read from an additional
+          # JSON report, to complete each SARIF report with an empty run per missing engine.
+          split_list "$OUTPUT_FILE"
+          sarif_files=()
+          for item in ${SPLIT[@]+"${SPLIT[@]}"}; do
+            if [[ "$item" == *.sarif ]]; then
+              sarif_files+=("$item")
+            fi
+          done
+          engines_report=""
+          if [[ ${#sarif_files[@]} -gt 0 ]]; then
+            engines_report="${RUNNER_TEMP:-/tmp}/code-analyzer-engines.json"
+            args+=(--output-file "$engines_report")
+          fi
+
           echo "::group::Salesforce Code Analyzer output"
           sf code-analyzer run ${args[@]+"${args[@]}"}
           code=$?
           echo "::endgroup::"
+
+          if [[ -n "$engines_report" && -f "$engines_report" ]]; then
+            for sarif in "${sarif_files[@]}"; do
+              if [[ -f "$sarif" ]]; then
+                jq --slurpfile report "$engines_report" '
+                  ([.runs[].tool.driver.name]) as $present
+                  | .runs += [$report[0].versions | to_entries[]
+                    | select(.key != "code-analyzer")
+                    | select(.key as $engine | $present | index($engine) | not)
+                    | {tool: {driver: {name: .key, semanticVersion: .value}}, results: []}]
+                ' "$sarif" > "$sarif.tmp" && mv "$sarif.tmp" "$sarif"
+              fi
+            done
+          fi
           if [[ $code -eq 0 ]]; then
             ca_outcome="Passed"
             echo "✅ Code Analyzer: no violations at or above the threshold"

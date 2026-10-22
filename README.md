@@ -108,6 +108,8 @@ When producing a SARIF file, let the analyzer report findings without failing th
           sarif_file: results.sarif
 ```
 
+The Code Analyzer only writes a SARIF run for each engine with violations. The action completes every `.sarif` output file with an empty run for each engine that ran without violations, so the upload also succeeds when no violations are found, and code scanning closes the alerts of engines that no longer report any.
+
 ## Inputs
 
 | Name                 | Required | Default                                                | Description                                                                                   |

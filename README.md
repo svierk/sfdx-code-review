@@ -38,7 +38,7 @@ jobs:
         uses: svierk/sfdx-cli-setup@v1.1.3
 
       - name: Code Review
-        uses: svierk/sfdx-code-review@v1.1.0
+        uses: svierk/sfdx-code-review@v1.1.1
         with:
           code-analyzer: true
           prettier: true
@@ -71,7 +71,7 @@ The list inputs - `workspace`, `rule-selector` and `output-file` - accept a comm
 
 ```yaml
       - name: Code Review
-        uses: svierk/sfdx-code-review@v1.1.0
+        uses: svierk/sfdx-code-review@v1.1.1
         with:
           rule-selector: 'Security,Performance' # comma-separated
           workspace: | # multi-line block
@@ -96,7 +96,7 @@ When producing a SARIF file, let the analyzer report findings without failing th
     steps:
       - name: Code Review
         continue-on-error: true
-        uses: svierk/sfdx-code-review@v1.1.0
+        uses: svierk/sfdx-code-review@v1.1.1
         with:
           workspace: force-app
           output-file: results.sarif
@@ -155,7 +155,7 @@ The scan step itself only needs `SONAR_TOKEN` as an environment variable (plus `
 
 ## Security & versioning
 
-Every `uses:` reference in the snippets above is **pinned to an exact release version**, e.g. `svierk/sfdx-code-review@v1.1.0`. Do the same in your own pipelines:
+Every `uses:` reference in the snippets above is **pinned to an exact release version**, e.g. `svierk/sfdx-code-review@v1.1.1`. Do the same in your own pipelines:
 
 - **Never reference a mutable ref** such as `@main`, `@master` or `@v1`. It runs whatever code sits on that branch/tag at run time — with access to your repository and org credentials — so a compromised or rewritten ref would run unnoticed.
 - **Good — pin to an exact release tag** (`@v1.0.0`). Readable, concrete, and bumped through reviewed pull requests.

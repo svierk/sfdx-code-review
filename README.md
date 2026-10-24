@@ -2,7 +2,7 @@
 
 This repository implements a unified GitHub composite action for the **static code review** of Salesforce projects. It bundles the checks that are otherwise scattered across separate CI steps into a single, configurable quality gate:
 
-- 🛡️ **Salesforce Code Analyzer** — static analysis for Apex, LWC, Aura and more (PMD, ESLint, RetireJS, Flow, …)
+- 🛡️ **Salesforce Code Analyzer** — static analysis for Apex, LWC, Aura and more (PMD, ESLint, RetireJS, Flow, …), including [SLDS 2 checks](#slds-2-checks)
 - 🎨 **Prettier** — code formatting check
 - 📏 **ESLint** — JavaScript/LWC code quality, with a native report for SonarQube/SonarCloud
 
@@ -110,6 +110,40 @@ When producing a SARIF file, let the analyzer report findings without failing th
 
 The Code Analyzer only writes a SARIF run for each engine with violations. The action completes every `.sarif` output file with an empty run for each engine that ran without violations, so the upload also succeeds when no violations are found, and code scanning closes the alerts of engines that no longer report any.
 
+### SLDS 2 checks
+
+Since version 5.4.0, the ESLint engine of the Code Analyzer bundles the rules of the [SLDS Linter](https://www.npmjs.com/package/@salesforce-ux/slds-linter). The action therefore checks the styles and markup of Lightning Web Components and Aura components for SLDS 2 without an extra step. The rules carry the tags `SLDS` and `Recommended`, so the default `rule-selector` already runs them on `.css` and `.html`/`.cmp` files; `rule-selector: eslint:SLDS` runs them on their own.
+
+| Finding                                                    | Rule                           | Default severity |
+| ---------------------------------------------------------- | ------------------------------ | ---------------- |
+| Retired SLDS 1 design tokens (`--lwc-*`)                   | `lwc-token-to-slds-hook`       | Moderate (3)     |
+| Deprecated SLDS classes                                    | `no-deprecated-classes-slds2`  | Moderate (3)     |
+| Styling hooks without a fallback value                     | `no-slds-var-without-fallback` | Moderate (3)     |
+| Retired SLDS class names, e.g. `slds-icon--small`          | `enforce-bem-usage`            | Low (4)          |
+| Hard-coded values that have a matching SLDS 2 styling hook | `no-hardcoded-values-slds2`    | Low (4)          |
+
+With `severity-threshold: 3`, retired tokens fail the step, while hard-coded values are only reported - whether a value should become a styling hook is often a judgement call, e.g. for layout sizes. To fail on the retired class names as well, raise their severity in a `code-analyzer.yml` passed via `config-file`:
+
+```yaml
+rules:
+  eslint:
+    "@salesforce-ux/slds/enforce-bem-usage":
+      severity: Moderate
+```
+
+> **SLDS checks next to the separate ESLint check.** With `eslint: true`, JavaScript is already linted with your project config, and the engine's JavaScript and LWC base rules would only report the same files a second time. Instead of turning the engine off (`disable_engine: true`), which also drops the SLDS rules, keep it on with only its SLDS base config:
+>
+> ```yaml
+> engines:
+>   eslint:
+>     disable_javascript_base_config: true
+>     disable_lwc_base_config: true
+>     disable_typescript_base_config: true
+>     disable_react_base_config: true
+> ```
+
+A `plugin-version` older than 5.4.0 has no SLDS rules.
+
 ## Inputs
 
 | Name                 | Required | Default                                                | Description                                                                                   |
@@ -172,6 +206,7 @@ If you pass credentials to *other* steps of the same workflow, reference them as
 - [code-analyzer run](https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/references/code-analyzer-command-reference) | Command Reference
 - [Prettier](https://prettier.io/docs/en/cli.html) | CLI
 - [ESLint](https://eslint.org/docs/latest/use/command-line-interface) | CLI
+- [SLDS Linter](https://www.npmjs.com/package/@salesforce-ux/slds-linter) | Rules of the SLDS 2 checks
 
 ## Releases
 
